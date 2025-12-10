@@ -1,7 +1,5 @@
 # Fraud Detection Model - E-commerce Transactions
 
-**Generated on:** 2025-12-10 02:48:48
-
 This project implements a comprehensive fraud detection system for e-commerce transactions using multiple machine learning models.
 
 ## Dataset Overview
