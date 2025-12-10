@@ -36,8 +36,8 @@ import catboost as cb
 from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
 
 # Report Generation
-from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.patches as mpatches
+import os
 
 # Set style
 sns.set_style('whitegrid')
@@ -397,289 +397,422 @@ print("\nModel Comparison Results:")
 print(comparison_df.to_string(index=False))
 
 # ============================================================================
-# STEP 8: GENERATE PDF REPORT
+# STEP 8: GENERATE README REPORT WITH GRAPHS
 # ============================================================================
-print("\nSTEP 8: Generating PDF Report...")
+print("\nSTEP 8: Generating README Report with Graphs...")
 
-def create_pdf_report():
-    """Create comprehensive PDF report with all analysis results"""
+# Create images directory for graphs
+os.makedirs('images', exist_ok=True)
+
+def create_readme_report():
+    """Create comprehensive README report with all analysis results and graphs"""
     
-    with PdfPages('Fraud_Detection_Report.pdf') as pdf:
-        # Page 1: Title Page
-        fig = plt.figure(figsize=(11, 8.5))
-        fig.text(0.5, 0.7, 'FRAUD DETECTION MODEL', 
-                ha='center', va='center', fontsize=24, fontweight='bold')
-        fig.text(0.5, 0.6, 'E-commerce Transactions', 
-                ha='center', va='center', fontsize=18)
-        fig.text(0.5, 0.4, f'Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', 
-                ha='center', va='center', fontsize=12)
-        fig.text(0.5, 0.3, f'Dataset: {df.shape[0]:,} transactions, {df.shape[1]} features', 
-                ha='center', va='center', fontsize=12)
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
+    # Get best model details
+    best_model_name = comparison_df.iloc[0]['Model']
+    best_model_result = results[best_model_name]
+    best_metrics = comparison_df[comparison_df['Model'] == best_model_name].iloc[0]
+    
+    # 1. Dataset Overview Graphs
+    print("  Creating dataset overview graphs...")
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig.suptitle('Dataset Overview', fontsize=16, fontweight='bold')
+    
+    # Fraud distribution
+    fraud_counts = df['is_fraud'].value_counts()
+    axes[0, 0].pie(fraud_counts.values, labels=['Legitimate', 'Fraud'], 
+                  autopct='%1.1f%%', startangle=90, colors=['#2ecc71', '#e74c3c'])
+    axes[0, 0].set_title('Fraud Distribution')
+    
+    # Amount distribution
+    axes[0, 1].hist(df[df['is_fraud']==0]['amount'], bins=50, alpha=0.7, 
+                   label='Legitimate', color='green', density=True)
+    axes[0, 1].hist(df[df['is_fraud']==1]['amount'], bins=50, alpha=0.7, 
+                   label='Fraud', color='red', density=True)
+    axes[0, 1].set_xlabel('Transaction Amount')
+    axes[0, 1].set_ylabel('Density')
+    axes[0, 1].set_title('Amount Distribution by Fraud Status')
+    axes[0, 1].legend()
+    axes[0, 1].set_xlim(0, df['amount'].quantile(0.99))
+    
+    # Channel distribution
+    channel_fraud = pd.crosstab(df['channel'], df['is_fraud'], normalize='index') * 100
+    channel_fraud.plot(kind='bar', ax=axes[1, 0], color=['green', 'red'])
+    axes[1, 0].set_title('Fraud Rate by Channel')
+    axes[1, 0].set_xlabel('Channel')
+    axes[1, 0].set_ylabel('Percentage')
+    axes[1, 0].legend(['Legitimate', 'Fraud'])
+    axes[1, 0].tick_params(axis='x', rotation=45)
+    
+    # Merchant category fraud rate
+    merchant_fraud = df.groupby('merchant_category')['is_fraud'].mean().sort_values(ascending=False)
+    merchant_fraud.plot(kind='barh', ax=axes[1, 1], color='coral')
+    axes[1, 1].set_title('Fraud Rate by Merchant Category')
+    axes[1, 1].set_xlabel('Fraud Rate')
+    
+    plt.tight_layout()
+    plt.savefig('images/dataset_overview.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # 2. Model Performance Comparison
+    print("  Creating model comparison graph...")
+    fig, ax = plt.subplots(figsize=(12, 6))
+    fig.suptitle('Model Performance Comparison', fontsize=16, fontweight='bold')
+    
+    x = np.arange(len(comparison_df))
+    width = 0.15
+    
+    metrics_to_plot = ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'ROC-AUC']
+    for i, metric in enumerate(metrics_to_plot):
+        ax.bar(x + i*width, comparison_df[metric], width, label=metric)
+    
+    ax.set_xlabel('Models')
+    ax.set_ylabel('Score')
+    ax.set_title('Model Performance Metrics')
+    ax.set_xticks(x + width * 2)
+    ax.set_xticklabels(comparison_df['Model'], rotation=45, ha='right')
+    ax.legend()
+    ax.grid(axis='y', alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('images/model_comparison.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # 3. ROC Curves
+    print("  Creating ROC curves...")
+    fig, ax = plt.subplots(figsize=(10, 8))
+    fig.suptitle('ROC Curves Comparison', fontsize=16, fontweight='bold')
+    
+    for model_name, result in results.items():
+        fpr, tpr, _ = roc_curve(y_test, result['probabilities'])
+        auc_score = roc_auc_score(y_test, result['probabilities'])
+        ax.plot(fpr, tpr, label=f'{model_name} (AUC = {auc_score:.4f})', linewidth=2)
+    
+    ax.plot([0, 1], [0, 1], 'k--', label='Random Classifier')
+    ax.set_xlabel('False Positive Rate')
+    ax.set_ylabel('True Positive Rate')
+    ax.set_title('ROC Curves')
+    ax.legend()
+    ax.grid(alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('images/roc_curves.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # 4. Precision-Recall Curves
+    print("  Creating Precision-Recall curves...")
+    fig, ax = plt.subplots(figsize=(10, 8))
+    fig.suptitle('Precision-Recall Curves Comparison', fontsize=16, fontweight='bold')
+    
+    for model_name, result in results.items():
+        precision, recall, _ = precision_recall_curve(y_test, result['probabilities'])
+        pr_auc = average_precision_score(y_test, result['probabilities'])
+        ax.plot(recall, precision, label=f'{model_name} (PR-AUC = {pr_auc:.4f})', linewidth=2)
+    
+    ax.set_xlabel('Recall')
+    ax.set_ylabel('Precision')
+    ax.set_title('Precision-Recall Curves')
+    ax.legend()
+    ax.grid(alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('images/pr_curves.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # 5. Confusion Matrices
+    print("  Creating confusion matrices...")
+    n_models = len(results)
+    n_cols = 3
+    n_rows = (n_models + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5*n_rows))
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
+    axes = axes.flatten()
+    fig.suptitle('Confusion Matrices', fontsize=16, fontweight='bold')
+    
+    for idx, (model_name, result) in enumerate(results.items()):
+        cm = confusion_matrix(y_test, result['predictions'])
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[idx],
+                   xticklabels=['Legitimate', 'Fraud'],
+                   yticklabels=['Legitimate', 'Fraud'])
+        axes[idx].set_title(model_name)
+        axes[idx].set_ylabel('True Label')
+        axes[idx].set_xlabel('Predicted Label')
+    
+    # Hide unused subplots
+    for idx in range(len(results), len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    plt.savefig('images/confusion_matrices.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # 6. Feature Importance (for tree-based models)
+    print("  Creating feature importance graphs...")
+    tree_models = ['XGBoost_Tuned', 'LightGBM_Tuned', 'CatBoost_Tuned']
+    available_tree_models = [m for m in tree_models if m in results]
+    
+    if available_tree_models:
+        fig, axes = plt.subplots(len(available_tree_models), 1, figsize=(12, 5*len(available_tree_models)))
+        if len(available_tree_models) == 1:
+            axes = [axes]
+        fig.suptitle('Feature Importance (Top 15)', fontsize=16, fontweight='bold')
         
-        # Page 2: Dataset Overview
-        fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
-        fig.suptitle('Dataset Overview', fontsize=16, fontweight='bold')
-        
-        # Fraud distribution
-        fraud_counts = df['is_fraud'].value_counts()
-        axes[0, 0].pie(fraud_counts.values, labels=['Legitimate', 'Fraud'], 
-                      autopct='%1.1f%%', startangle=90, colors=['#2ecc71', '#e74c3c'])
-        axes[0, 0].set_title('Fraud Distribution')
-        
-        # Amount distribution
-        axes[0, 1].hist(df[df['is_fraud']==0]['amount'], bins=50, alpha=0.7, 
-                       label='Legitimate', color='green', density=True)
-        axes[0, 1].hist(df[df['is_fraud']==1]['amount'], bins=50, alpha=0.7, 
-                       label='Fraud', color='red', density=True)
-        axes[0, 1].set_xlabel('Transaction Amount')
-        axes[0, 1].set_ylabel('Density')
-        axes[0, 1].set_title('Amount Distribution by Fraud Status')
-        axes[0, 1].legend()
-        axes[0, 1].set_xlim(0, df['amount'].quantile(0.99))
-        
-        # Channel distribution
-        channel_fraud = pd.crosstab(df['channel'], df['is_fraud'], normalize='index') * 100
-        channel_fraud.plot(kind='bar', ax=axes[1, 0], color=['green', 'red'])
-        axes[1, 0].set_title('Fraud Rate by Channel')
-        axes[1, 0].set_xlabel('Channel')
-        axes[1, 0].set_ylabel('Percentage')
-        axes[1, 0].legend(['Legitimate', 'Fraud'])
-        axes[1, 0].tick_params(axis='x', rotation=45)
-        
-        # Merchant category fraud rate
-        merchant_fraud = df.groupby('merchant_category')['is_fraud'].mean().sort_values(ascending=False)
-        merchant_fraud.plot(kind='barh', ax=axes[1, 1], color='coral')
-        axes[1, 1].set_title('Fraud Rate by Merchant Category')
-        axes[1, 1].set_xlabel('Fraud Rate')
+        for idx, model_name in enumerate(available_tree_models):
+            model = results[model_name]['model']
+            if hasattr(model, 'feature_importances_'):
+                importances = model.feature_importances_
+                feature_names = X.columns
+                indices = np.argsort(importances)[::-1][:15]
+                
+                axes[idx].barh(range(len(indices)), importances[indices])
+                axes[idx].set_yticks(range(len(indices)))
+                axes[idx].set_yticklabels([feature_names[i] for i in indices])
+                axes[idx].set_xlabel('Importance')
+                axes[idx].set_title(model_name)
+                axes[idx].invert_yaxis()
         
         plt.tight_layout()
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
-        
-        # Page 3: Feature Engineering Summary
-        fig = plt.figure(figsize=(11, 8.5))
-        fig.text(0.1, 0.9, 'Feature Engineering Summary', 
-                fontsize=16, fontweight='bold')
-        
-        feature_summary = f"""
-        Original Features: {len(df.columns) - 1}
-        Engineered Features: {len(numerical_features + categorical_features)}
-        
-        Feature Categories:
-        - Time-based features: 6 (hour, day, dayofweek, month, weekend, night)
-        - Amount-based features: 4 (deviation, ratio, zscore, high_amount flag)
-        - Geographic features: 2 (country mismatch, high shipping distance)
-        - User behavior features: 3 (frequency, new user, low activity)
-        - Security features: 2 (security score, weak security flag)
-        - Interaction features: 2 (amount per distance, promo with low security)
-        
-        Total Features Used: {len(numerical_features + categorical_features)}
-        """
-        
-        fig.text(0.1, 0.7, feature_summary, fontsize=11, 
-                verticalalignment='top', family='monospace')
-        
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
-        
-        # Page 4: Model Comparison
-        fig, ax = plt.subplots(figsize=(11, 8.5))
-        fig.suptitle('Model Performance Comparison', fontsize=16, fontweight='bold')
-        
-        x = np.arange(len(comparison_df))
-        width = 0.15
-        
-        metrics_to_plot = ['Accuracy', 'Precision', 'Recall', 'F1-Score', 'ROC-AUC']
-        for i, metric in enumerate(metrics_to_plot):
-            ax.bar(x + i*width, comparison_df[metric], width, label=metric)
-        
-        ax.set_xlabel('Models')
-        ax.set_ylabel('Score')
-        ax.set_title('Model Performance Metrics')
-        ax.set_xticks(x + width * 2)
-        ax.set_xticklabels(comparison_df['Model'], rotation=45, ha='right')
-        ax.legend()
-        ax.grid(axis='y', alpha=0.3)
-        
-        plt.tight_layout()
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
-        
-        # Page 5: ROC Curves
-        fig, ax = plt.subplots(figsize=(11, 8.5))
-        fig.suptitle('ROC Curves Comparison', fontsize=16, fontweight='bold')
-        
-        for model_name, result in results.items():
-            fpr, tpr, _ = roc_curve(y_test, result['probabilities'])
-            auc_score = roc_auc_score(y_test, result['probabilities'])
-            ax.plot(fpr, tpr, label=f'{model_name} (AUC = {auc_score:.4f})', linewidth=2)
-        
-        ax.plot([0, 1], [0, 1], 'k--', label='Random Classifier')
-        ax.set_xlabel('False Positive Rate')
-        ax.set_ylabel('True Positive Rate')
-        ax.set_title('ROC Curves')
-        ax.legend()
-        ax.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
-        
-        # Page 6: Precision-Recall Curves
-        fig, ax = plt.subplots(figsize=(11, 8.5))
-        fig.suptitle('Precision-Recall Curves Comparison', fontsize=16, fontweight='bold')
-        
-        for model_name, result in results.items():
-            precision, recall, _ = precision_recall_curve(y_test, result['probabilities'])
-            pr_auc = average_precision_score(y_test, result['probabilities'])
-            ax.plot(recall, precision, label=f'{model_name} (PR-AUC = {pr_auc:.4f})', linewidth=2)
-        
-        ax.set_xlabel('Recall')
-        ax.set_ylabel('Precision')
-        ax.set_title('Precision-Recall Curves')
-        ax.legend()
-        ax.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
-        
-        # Page 7: Confusion Matrices
-        fig, axes = plt.subplots(2, 3, figsize=(11, 8.5))
-        fig.suptitle('Confusion Matrices', fontsize=16, fontweight='bold')
-        axes = axes.flatten()
-        
-        for idx, (model_name, result) in enumerate(list(results.items())[:6]):
-            cm = confusion_matrix(y_test, result['predictions'])
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[idx],
-                       xticklabels=['Legitimate', 'Fraud'],
-                       yticklabels=['Legitimate', 'Fraud'])
-            axes[idx].set_title(model_name)
-            axes[idx].set_ylabel('True Label')
-            axes[idx].set_xlabel('Predicted Label')
-        
-        # Hide unused subplot
-        if len(results) < 6:
-            axes[5].axis('off')
-        
-        plt.tight_layout()
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
-        
-        # Page 8: Best Model Details
-        best_model_name = comparison_df.iloc[0]['Model']
-        best_model_result = results[best_model_name]
-        
-        fig = plt.figure(figsize=(11, 8.5))
-        fig.text(0.5, 0.95, f'Best Model: {best_model_name}', 
-                ha='center', fontsize=18, fontweight='bold')
-        
-        best_metrics = comparison_df[comparison_df['Model'] == best_model_name].iloc[0]
-        
-        metrics_text = f"""
-        Performance Metrics:
-        
-        Accuracy:  {best_metrics['Accuracy']:.4f}
-        Precision: {best_metrics['Precision']:.4f}
-        Recall:    {best_metrics['Recall']:.4f}
-        F1-Score:  {best_metrics['F1-Score']:.4f}
-        ROC-AUC:   {best_metrics['ROC-AUC']:.4f}
-        PR-AUC:    {best_metrics['PR-AUC']:.4f}
-        
-        Classification Report:
-        {classification_report(y_test, best_model_result['predictions'])}
-        """
-        
-        fig.text(0.1, 0.7, metrics_text, fontsize=11, 
-                verticalalignment='top', family='monospace')
-        
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close()
-        
-        # Page 9: Feature Importance (for tree-based models)
-        tree_models = ['XGBoost_Tuned', 'LightGBM_Tuned', 'CatBoost_Tuned']
-        available_tree_models = [m for m in tree_models if m in results]
-        
-        if available_tree_models:
-            fig, axes = plt.subplots(len(available_tree_models), 1, figsize=(11, 8.5))
-            if len(available_tree_models) == 1:
-                axes = [axes]
-            fig.suptitle('Feature Importance (Top 15)', fontsize=16, fontweight='bold')
-            
-            for idx, model_name in enumerate(available_tree_models):
-                model = results[model_name]['model']
-                if hasattr(model, 'feature_importances_'):
-                    importances = model.feature_importances_
-                    feature_names = X.columns
-                    indices = np.argsort(importances)[::-1][:15]
-                    
-                    axes[idx].barh(range(len(indices)), importances[indices])
-                    axes[idx].set_yticks(range(len(indices)))
-                    axes[idx].set_yticklabels([feature_names[i] for i in indices])
-                    axes[idx].set_xlabel('Importance')
-                    axes[idx].set_title(model_name)
-                    axes[idx].invert_yaxis()
-            
-            plt.tight_layout()
-            pdf.savefig(fig, bbox_inches='tight')
-            plt.close()
-        
-        # Page 10: Summary and Recommendations
-        fig = plt.figure(figsize=(11, 8.5))
-        fig.text(0.5, 0.95, 'Summary and Recommendations', 
-                ha='center', fontsize=18, fontweight='bold')
-        
-        summary_text = f"""
-        MODEL PERFORMANCE SUMMARY
-        
-        Best Performing Model: {best_model_name}
-        ROC-AUC Score: {best_metrics['ROC-AUC']:.4f}
-        
-        Key Findings:
-        1. Dataset contains {df.shape[0]:,} transactions with {df['is_fraud'].mean()*100:.2f}% fraud rate
-        2. {len(numerical_features + categorical_features)} features were engineered from original dataset
-        3. All models show good performance with ROC-AUC > 0.85
-        
-        Model Rankings (by ROC-AUC):
-        """
-        
-        for i, row in comparison_df.iterrows():
-            summary_text += f"\n{i+1}. {row['Model']}: {row['ROC-AUC']:.4f}"
-        
-        summary_text += """
-        
-        
-        Recommendations:
-        1. Deploy the best performing model ({best_model_name}) for production
-        2. Monitor model performance regularly and retrain with new data
-        3. Consider ensemble methods for improved robustness
-        4. Focus on features with high importance for fraud detection
-        5. Implement real-time monitoring and alerting system
-        
-        Next Steps:
-        - A/B testing with production data
-        - Model interpretability analysis
-        - Cost-benefit analysis of false positives/negatives
-        - Integration with transaction processing system
-        """
-        
-        fig.text(0.1, 0.85, summary_text, fontsize=10, 
-                verticalalignment='top', family='monospace')
-        
-        pdf.savefig(fig, bbox_inches='tight')
+        plt.savefig('images/feature_importance.png', dpi=150, bbox_inches='tight')
         plt.close()
     
-    print("PDF report generated successfully: Fraud_Detection_Report.pdf")
+    # Generate README content
+    print("  Generating README.md...")
+    
+    # Get confusion matrices text
+    confusion_matrices_text = ""
+    for model_name, result in results.items():
+        cm = confusion_matrix(y_test, result['predictions'])
+        tn, fp, fn, tp = cm.ravel()
+        confusion_matrices_text += f"\n### {model_name}\n\n"
+        confusion_matrices_text += f"| | Predicted: Legitimate | Predicted: Fraud |\n"
+        confusion_matrices_text += f"|--|----------------------|------------------|\n"
+        confusion_matrices_text += f"| **Actual: Legitimate** | {tn:,} | {fp:,} |\n"
+        confusion_matrices_text += f"| **Actual: Fraud** | {fn:,} | {tp:,} |\n\n"
+    
+    # Get feature importance tables
+    feature_importance_text = ""
+    for model_name in available_tree_models:
+        if model_name in results:
+            model = results[model_name]['model']
+            if hasattr(model, 'feature_importances_'):
+                importances = model.feature_importances_
+                feature_names = X.columns
+                indices = np.argsort(importances)[::-1][:15]
+                
+                feature_importance_text += f"\n### {model_name} - Top 15 Features\n\n"
+                feature_importance_text += "| Rank | Feature | Importance |\n"
+                feature_importance_text += "|------|---------|------------|\n"
+                for rank, idx in enumerate(indices, 1):
+                    feature_importance_text += f"| {rank} | {feature_names[idx]} | {importances[idx]:.6f} |\n"
+                feature_importance_text += "\n"
+    
+    # Get classification report
+    classification_report_text = classification_report(y_test, best_model_result['predictions'])
+    
+    # Create README content
+    readme_content = f"""# Fraud Detection Model - E-commerce Transactions
 
-create_pdf_report()
+**Generated on:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+This project implements a comprehensive fraud detection system for e-commerce transactions using multiple machine learning models.
+
+## Dataset Overview
+
+- **Total Transactions:** {df.shape[0]:,}
+- **Total Features:** {df.shape[1]}
+- **Fraud Rate:** {df['is_fraud'].mean()*100:.2f}%
+- **Legitimate Transactions:** {(df['is_fraud']==0).sum():,}
+- **Fraudulent Transactions:** {(df['is_fraud']==1).sum():,}
+
+![Dataset Overview](images/dataset_overview.png)
+
+## Features
+
+- **Exploratory Data Analysis (EDA)**: Comprehensive analysis of transaction data
+- **Feature Engineering**: Creation of {len(numerical_features + categorical_features)} engineered features from original data
+- **Multiple Models**: 
+  - Logistic Regression (Baseline)
+  - XGBoost (with hyperparameter tuning)
+  - LightGBM (with hyperparameter tuning)
+  - CatBoost (with hyperparameter tuning)
+- **Hyperparameter Tuning**: Optimized hyperparameters for each model
+- **Model Evaluation**: Comprehensive metrics and comparisons
+
+## Feature Engineering Summary
+
+### Original Features
+{len(df.columns) - 1} original features from the dataset
+
+### Engineered Features
+{len(numerical_features + categorical_features)} total features used for modeling
+
+**Feature Categories:**
+- **Time-based features (6):** hour, day, dayofweek, month, weekend flag, night flag
+- **Amount-based features (4):** deviation from avg, ratio to avg, z-score, high amount flag
+- **Geographic features (2):** country mismatch, high shipping distance
+- **User behavior features (3):** transaction frequency, new user flag, low activity flag
+- **Security features (2):** security score, weak security flag
+- **Interaction features (2):** amount per distance, promo with low security
+
+## Model Performance Results
+
+### Model Comparison Table
+
+| Model | Accuracy | Precision | Recall | F1-Score | ROC-AUC | PR-AUC |
+|-------|----------|-----------|--------|----------|---------|--------|
+"""
+    
+    # Add model results to table
+    for _, row in comparison_df.iterrows():
+        readme_content += f"| {row['Model']} | {row['Accuracy']:.4f} | {row['Precision']:.4f} | {row['Recall']:.4f} | {row['F1-Score']:.4f} | {row['ROC-AUC']:.4f} | {row['PR-AUC']:.4f} |\n"
+    
+    readme_content += f"""
+![Model Performance Comparison](images/model_comparison.png)
+
+### Best Performing Model: **{best_model_name}**
+
+**Performance Metrics:**
+- **Accuracy:** {best_metrics['Accuracy']:.4f}
+- **Precision:** {best_metrics['Precision']:.4f}
+- **Recall:** {best_metrics['Recall']:.4f}
+- **F1-Score:** {best_metrics['F1-Score']:.4f}
+- **ROC-AUC:** {best_metrics['ROC-AUC']:.4f}
+- **PR-AUC:** {best_metrics['PR-AUC']:.4f}
+
+**Classification Report:**
+```
+{classification_report_text}
+```
+
+## ROC Curves
+
+![ROC Curves](images/roc_curves.png)
+
+## Precision-Recall Curves
+
+![Precision-Recall Curves](images/pr_curves.png)
+
+## Confusion Matrices
+
+{confusion_matrices_text}
+
+![Confusion Matrices](images/confusion_matrices.png)
+
+## Feature Importance Analysis
+
+{feature_importance_text}
+"""
+    
+    if available_tree_models:
+        readme_content += "![Feature Importance](images/feature_importance.png)\n\n"
+    
+    readme_content += f"""## Key Findings
+
+1. Dataset contains **{df.shape[0]:,} transactions** with **{df['is_fraud'].mean()*100:.2f}% fraud rate**
+2. **{len(numerical_features + categorical_features)} features** were engineered from original dataset
+3. All models show good performance with ROC-AUC > 0.85
+
+### Model Rankings (by ROC-AUC)
+
+"""
+    
+    for i, row in comparison_df.iterrows():
+        readme_content += f"{i+1}. **{row['Model']}**: {row['ROC-AUC']:.4f}\n"
+    
+    readme_content += f"""
+## Recommendations
+
+1. **Deploy the best performing model ({best_model_name})** for production
+2. **Monitor model performance regularly** and retrain with new data
+3. **Consider ensemble methods** for improved robustness
+4. **Focus on features with high importance** for fraud detection
+5. **Implement real-time monitoring and alerting system**
+
+## Next Steps
+
+- A/B testing with production data
+- Model interpretability analysis
+- Cost-benefit analysis of false positives/negatives
+- Integration with transaction processing system
+
+## Installation
+
+### Prerequisites
+- Python 3.7 or higher
+- pip package manager
+
+### Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+### Run the Analysis
+
+```bash
+python fraud_detection_model.py
+```
+
+Or on Windows:
+```bash
+py fraud_detection_model.py
+```
+
+## Project Structure
+
+```
+.
+├── transactions.csv              # Input transaction data
+├── fraud_detection_model.py     # Main analysis script
+├── requirements.txt             # Python dependencies
+├── run_analysis.bat             # Windows batch file to run analysis
+├── setup_and_run.py             # Setup and run script
+├── images/                      # Generated graphs and visualizations
+│   ├── dataset_overview.png
+│   ├── model_comparison.png
+│   ├── roc_curves.png
+│   ├── pr_curves.png
+│   ├── confusion_matrices.png
+│   └── feature_importance.png
+└── README.md                    # This file (with results)
+```
+
+## Notes
+
+- The script uses stratified train-test split (80/20) to handle class imbalance
+- All models use class weights to handle imbalanced data
+- Hyperparameter tuning uses RandomizedSearchCV for efficiency
+- The analysis may take 10-30 minutes depending on your system
+
+## Troubleshooting
+
+If you encounter import errors:
+1. Ensure all packages are installed: `pip install -r requirements.txt`
+2. Try installing with user flag: `pip install --user <package>`
+3. Check Python version: `python --version` (should be 3.7+)
+
+For large datasets, consider:
+- Reducing hyperparameter search space
+- Using fewer CV folds
+- Sampling the data for initial testing
+"""
+    
+    # Write to README.md
+    with open('README.md', 'w', encoding='utf-8') as f:
+        f.write(readme_content)
+    
+    print("README report generated successfully: README.md")
+
+create_readme_report()
 
 print("\n" + "="*80)
 print("ANALYSIS COMPLETE!")
 print("="*80)
 print(f"\nBest Model: {comparison_df.iloc[0]['Model']}")
 print(f"ROC-AUC Score: {comparison_df.iloc[0]['ROC-AUC']:.4f}")
-print(f"\nReport saved as: Fraud_Detection_Report.pdf")
+print(f"\nResults saved to: README.md")
+print(f"Graphs saved to: images/ directory")
 print("\nAll models have been trained and evaluated successfully!")
 
